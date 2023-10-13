@@ -4,18 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
-)
-
-const (
-	loggerINFO  = "INFO"
-	loggerWarn  = "WARN"
-	loggerError = "ERR"
 )
 
 const maxLogCount = 1000000
@@ -26,6 +21,26 @@ var setupLogWorking bool
 
 func SetupLogger() {
 	if *LogDir != "" {
+
+		log.SetFormatter(&log.JSONFormatter{
+			TimestampFormat: "2006-01-02 15:04:05",
+			FieldMap: log.FieldMap{
+				log.FieldKeyTime:  "time",
+				log.FieldKeyLevel: "level",
+				log.FieldKeyMsg:   "message",
+				log.FieldKeyFunc:  "caller",
+			},
+		})
+		logPath := filepath.Join(*LogDir, "oneapi.log")
+
+		logWriter := &lumberjack.Logger{
+			Filename:   logPath, //日志文件位置
+			MaxSize:    5,       // 单文件最大容量,单位是MB
+			MaxBackups: 3,       // 最大保留过期文件个数
+			MaxAge:     7,       // 保留过期文件的最大时间间隔,单位是天
+			Compress:   false,   // 是否需要压缩滚动日志, 使用的 gzip 压缩
+			LocalTime:  true,
+		}
 		ok := setupLogLock.TryLock()
 		if !ok {
 			log.Println("setup log is already working")
@@ -35,46 +50,48 @@ func SetupLogger() {
 			setupLogLock.Unlock()
 			setupLogWorking = false
 		}()
-		logPath := filepath.Join(*LogDir, fmt.Sprintf("oneapi-%s.log", time.Now().Format("20060102")))
-		fd, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal("failed to open log file")
-		}
-		gin.DefaultWriter = io.MultiWriter(os.Stdout, fd)
-		gin.DefaultErrorWriter = io.MultiWriter(os.Stderr, fd)
+
+		log.SetOutput(io.MultiWriter(logWriter, os.Stdout))
+		log.SetReportCaller(true)
+
+		gin.DefaultWriter = os.Stdout
+		gin.DefaultErrorWriter = log.StandardLogger().Writer()
 	}
 }
 
-func SysLog(s string) {
-	t := time.Now()
-	_, _ = fmt.Fprintf(gin.DefaultWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
+func SysLog(s interface{}) {
+	log.WithFields(log.Fields{
+		"service": "SYS",
+	}).Info(s)
 }
 
-func SysError(s string) {
-	t := time.Now()
-	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
+func SysError(s interface{}) {
+	log.WithFields(log.Fields{
+		"service": "SYS",
+	}).Error(s)
 }
 
-func LogInfo(ctx context.Context, msg string) {
-	logHelper(ctx, loggerINFO, msg)
+func LogInfo(ctx context.Context, msg interface{}) {
+	logHelper(ctx, log.InfoLevel, msg)
 }
 
-func LogWarn(ctx context.Context, msg string) {
-	logHelper(ctx, loggerWarn, msg)
+func LogWarn(ctx context.Context, msg interface{}) {
+	logHelper(ctx, log.WarnLevel, msg)
 }
 
-func LogError(ctx context.Context, msg string) {
-	logHelper(ctx, loggerError, msg)
+func LogError(ctx context.Context, msg interface{}) {
+	logHelper(ctx, log.ErrorLevel, msg)
 }
 
-func logHelper(ctx context.Context, level string, msg string) {
-	writer := gin.DefaultErrorWriter
-	if level == loggerINFO {
-		writer = gin.DefaultWriter
-	}
+func logHelper(ctx context.Context, level log.Level, msg interface{}) {
+
 	id := ctx.Value(RequestIdKey)
-	now := time.Now()
-	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
+
+	log.WithFields(log.Fields{
+		"service":        fmt.Sprintf("OneAPI"),
+		"request-id-key": id,
+	}).Log(level, msg)
+
 	logCount++ // we don't need accurate count, so no lock here
 	if logCount > maxLogCount && !setupLogWorking {
 		logCount = 0
