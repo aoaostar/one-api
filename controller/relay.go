@@ -6,6 +6,7 @@ import (
 	"one-api/common"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -168,6 +169,8 @@ type CompletionsStreamResponse struct {
 }
 
 func Relay(c *gin.Context) {
+	common.LogInfo(c.Request.Context(), "relay 先睡一会")
+	time.Sleep(60 * time.Second)
 	relayMode := RelayModeUnknown
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/chat/completions") {
 		relayMode = RelayModeChatCompletions
